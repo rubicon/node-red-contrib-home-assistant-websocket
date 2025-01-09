@@ -9,7 +9,13 @@ import {
 } from 'home-assistant-js-websocket';
 import WebSocket from 'ws';
 
+import { ClientEvent } from './Websocket';
+
 const debug = Debug('home-assistant:socket');
+
+interface HaWebSocket extends WebSocket {
+    haVersion: string;
+}
 
 type ConnectionOptions = {
     auth: {
@@ -32,20 +38,19 @@ export default function createSocket({
     eventBus,
     rejectUnauthorizedCerts,
     url,
-}: // eslint-disable-next-line @typescript-eslint/no-explicit-any
-ConnectionOptions): Promise<any> {
+}: ConnectionOptions): Promise<HaWebSocket> {
     debug('[Auth Phase] Initializing', url);
 
     function connect(
-        promResolve: (socket: WebSocket) => void,
-        promReject: (err: Error) => void
+        promResolve: (socket: HaWebSocket) => void,
+        promReject: (err: Error) => void,
     ) {
         debug('[Auth Phase] New connection', url);
-        eventBus.emit('ha_client:connecting');
+        eventBus.emit(ClientEvent.Connecting);
 
         const socket = new WebSocket(url, {
             rejectUnauthorized: rejectUnauthorizedCerts,
-        });
+        }) as HaWebSocket;
 
         // If invalid auth, we will not try to reconnect.
         let invalidAuth = false;
@@ -59,8 +64,10 @@ ConnectionOptions): Promise<any> {
             }
         };
 
-        const onMessage = (event: { data: string }) => {
-            const message = JSON.parse(event.data);
+        const onMessage = (data: WebSocket.RawData, isBinary: boolean) => {
+            if (isBinary) return;
+
+            const message = JSON.parse(data.toString());
 
             debug('[Auth Phase] Received', message);
 
@@ -71,10 +78,21 @@ ConnectionOptions): Promise<any> {
                     break;
 
                 case MSG_TYPE_AUTH_OK:
-                    socket.removeEventListener('open', onOpen);
-                    socket.removeEventListener('message', onMessage);
-                    socket.removeEventListener('close', onClose);
-                    socket.removeEventListener('error', onClose);
+                    socket.off('open', onOpen);
+                    socket.off('message', onMessage);
+                    socket.off('close', onClose);
+                    socket.off('error', onClose);
+                    socket.haVersion = message.ha_version;
+                    // enable coalesce messages if supported
+                    if (atLeastHaVersion(socket.haVersion, 2022, 9)) {
+                        socket.send(
+                            JSON.stringify({
+                                type: 'supported_features',
+                                id: 1,
+                                features: { coalesce_messages: 1 },
+                            }),
+                        );
+                    }
                     promResolve(socket);
                     break;
 
@@ -87,7 +105,7 @@ ConnectionOptions): Promise<any> {
 
         const onClose = () => {
             // If we are in error handler make sure close handler doesn't also fire.
-            socket.removeEventListener('close', onClose);
+            socket.off('close', onClose);
             if (invalidAuth) {
                 promReject(ERR_INVALID_AUTH);
                 return;
@@ -97,18 +115,40 @@ ConnectionOptions): Promise<any> {
             setTimeout(() => connect(promResolve, promReject), 5000);
         };
 
-        socket.addEventListener('open', onOpen);
-        socket.addEventListener('message', onMessage);
-        socket.addEventListener('close', onClose);
-        socket.addEventListener('error', onClose);
+        socket.on('open', onOpen);
+        socket.on('message', onMessage);
+        socket.on('close', onClose);
+        socket.on('error', onClose);
     }
 
-    return new Promise<WebSocket>((resolve, reject) => {
+    return new Promise<HaWebSocket>((resolve, reject) => {
         // if hass.io, do a 5 second delay so it doesn't spam the hass.io proxy
         // https://github.com/zachowj/node-red-contrib-home-assistant-websocket/issues/76
         setTimeout(
             () => connect(resolve, reject),
-            connectionDelay !== false ? 5000 : 0
+            connectionDelay !== false ? 5000 : 0,
         );
     });
+}
+
+// https://github.com/home-assistant/home-assistant-js-websocket/blob/95f166b29a09fc1841bd0c1f312391ceb2812520/lib/util.ts#L45
+export function atLeastHaVersion(
+    version: string,
+    major: number,
+    minor: number,
+    patch?: number,
+): boolean {
+    const [haMajor, haMinor, haPatch] = version.split('.', 3);
+
+    return (
+        Number(haMajor) > major ||
+        (Number(haMajor) === major &&
+            (patch === undefined
+                ? Number(haMinor) >= minor
+                : Number(haMinor) > minor)) ||
+        (patch !== undefined &&
+            Number(haMajor) === major &&
+            Number(haMinor) === minor &&
+            Number(haPatch) >= patch)
+    );
 }

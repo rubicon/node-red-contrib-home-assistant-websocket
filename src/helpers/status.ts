@@ -1,4 +1,4 @@
-import { Node, NodeStatus } from 'node-red';
+import { NodeStatus } from 'node-red';
 
 import {
     STATE_CONNECTED,
@@ -7,7 +7,12 @@ import {
     STATE_ERROR,
     STATE_RUNNING,
 } from '../const';
+import { RED } from '../globals';
+import { Credentials } from '../homeAssistant';
 import HomeAssistant from '../homeAssistant/HomeAssistant';
+import { DateTimeFormatOptions } from '../types/DateTimeFormatOptions';
+import { BaseNode, ServerNode, ServerNodeConfig } from '../types/nodes';
+import { formatDate } from './date';
 
 export const STATUS_COLOR_BLUE = 'blue';
 export const STATUS_COLOR_GREEN = 'green';
@@ -19,10 +24,14 @@ export const STATUS_SHAPE_RING = 'ring';
 
 export class Status {
     protected isNodeDisabled = false;
-    private lastStatus: NodeStatus = {};
+    #lastStatus: NodeStatus = {};
+    serverConfig?: ServerNodeConfig;
 
-    // eslint-disable-next-line no-useless-constructor
-    constructor(readonly node: Node) {}
+    constructor(readonly node: BaseNode) {
+        const serverId = this.node?.config?.server as unknown as string;
+        const server = RED.nodes.getNode(serverId) as ServerNode<Credentials>;
+        this.serverConfig = server?.config;
+    }
 
     // eslint-disable-next-line no-empty-pattern, @typescript-eslint/no-empty-function
     init({} = {}): void {}
@@ -30,13 +39,13 @@ export class Status {
     setNodeState(value: boolean): void {
         if (this.isNodeDisabled === value) {
             this.isNodeDisabled = !value;
-            this.updateStatus(this.lastStatus);
+            this.updateStatus(this.#lastStatus);
         }
     }
 
     set(status: NodeStatus = {}): void {
         if (this.isNodeDisabled === false) {
-            this.lastStatus = status;
+            this.#lastStatus = status;
         }
         this.updateStatus(status);
     }
@@ -74,7 +83,7 @@ export class Status {
             status = {
                 fill: STATUS_COLOR_GREY,
                 shape: STATUS_SHAPE_DOT,
-                text: 'config-server.status.disabled',
+                text: RED._('home-assistant.status.disabled'),
             };
         }
 
@@ -82,23 +91,55 @@ export class Status {
     }
 
     appendDateString(text: string): string {
-        return `${text} at: ${this.getPrettyDate()}`;
+        const separator = this.serverConfig?.statusSeparator ?? '';
+        const dateString = formatDate({
+            options: this.statusOptions(),
+        });
+
+        return `${text} ${separator}${dateString}`;
     }
 
-    getPrettyDate(): string {
-        return new Date().toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            hour12: false,
+    statusOptions(): DateTimeFormatOptions {
+        const config = this.serverConfig;
+
+        const options: DateTimeFormatOptions = {
+            year:
+                config?.statusYear === 'hidden'
+                    ? undefined
+                    : config?.statusYear,
+            month:
+                config?.statusMonth === 'hidden'
+                    ? undefined
+                    : (config?.statusMonth ?? 'short'),
+            day:
+                config?.statusDay === 'hidden'
+                    ? undefined
+                    : (config?.statusDay ?? 'numeric'),
+            hourCycle:
+                config?.statusHourCycle === 'default'
+                    ? undefined
+                    : (config?.statusHourCycle ?? 'h23'),
             hour: 'numeric',
             minute: 'numeric',
-        });
+        };
+
+        switch (config?.statusTimeFormat) {
+            case 'h:m:s':
+                options.second = 'numeric';
+                break;
+            case 'h:m:s.ms':
+                options.second = 'numeric';
+                options.fractionalSecondDigits = 3;
+                break;
+        }
+
+        return options;
     }
 }
 
 export class EventsStatus extends Status {
-    private connectionState = STATE_DISCONNECTED;
-    private eventListeners: { (): void }[] = [];
+    #connectionState = STATE_DISCONNECTED;
+    #eventListeners: { (): void }[] = [];
 
     init({
         nodeState,
@@ -127,35 +168,35 @@ export class EventsStatus extends Status {
         };
 
         Object.entries(events).forEach(([event, callback]) => {
-            this.eventListeners.push(() =>
-                homeAssistant.removeListener(event, callback)
+            this.#eventListeners.push(() =>
+                homeAssistant.removeListener(event, callback),
             );
             homeAssistant.addListener(event, callback.bind(this));
         });
     }
 
     onClientClose(): void {
-        this.connectionState = STATE_DISCONNECTED;
+        this.#connectionState = STATE_DISCONNECTED;
         this.updateConnectionStatus();
     }
 
     onClientConnecting(): void {
-        this.connectionState = STATE_CONNECTING;
+        this.#connectionState = STATE_CONNECTING;
         this.updateConnectionStatus();
     }
 
     onClientError(): void {
-        this.connectionState = STATE_ERROR;
+        this.#connectionState = STATE_ERROR;
         this.updateConnectionStatus();
     }
 
     onClientOpen(): void {
-        this.connectionState = STATE_CONNECTED;
+        this.#connectionState = STATE_CONNECTED;
         this.updateConnectionStatus();
     }
 
     onClientRunning(): void {
-        this.connectionState = STATE_RUNNING;
+        this.#connectionState = STATE_RUNNING;
         this.updateConnectionStatus();
     }
 
@@ -168,32 +209,35 @@ export class EventsStatus extends Status {
         const status: NodeStatus = {
             fill: STATUS_COLOR_RED,
             shape: STATUS_SHAPE_RING,
-            text: 'config-server.status.disconnected',
+            text: 'home-assistant.status.disconnected',
         };
 
-        switch (this.connectionState) {
+        switch (this.#connectionState) {
             case STATE_CONNECTED:
                 status.fill = STATUS_COLOR_GREEN;
-                status.text = 'config-server.status.connected';
+                status.text = 'home-assistant.status.connected';
                 break;
             case STATE_CONNECTING:
                 status.fill = STATUS_COLOR_YELLOW;
-                status.text = 'config-server.status.connecting';
+                status.text = 'home-assistant.status.connecting';
                 break;
             case STATE_ERROR:
-                status.text = 'config-server.status.error';
+                status.text = 'home-assistant.status.error';
                 break;
             case STATE_RUNNING:
                 status.fill = STATUS_COLOR_GREEN;
-                status.text = 'config-server.status.running';
+                status.text = 'home-assistant.status.running';
                 break;
         }
 
+        if (status.text) {
+            status.text = RED._(status.text);
+        }
         return status;
     }
 
     destroy(): void {
-        this.eventListeners.forEach((callback) => callback());
+        this.#eventListeners.forEach((callback) => callback());
     }
 }
 

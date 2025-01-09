@@ -1,0 +1,35 @@
+{
+  "ha-action": {
+    "error": {
+      "domain_service_deprecated": "The domain and service input properties are deprecated and will be removed in version 1.0. Please use the action property instead.",
+      "entity_id_target_data": "Entity ID is required to be in the data property for this action. Please add the entity ID to the data property. This will stop working in version 1.0.",
+      "invalid_action_format": "Invalid action format: __action__",
+      "invalid_entity_id": "Invalid entity ID format",
+      "invalid_json": "Invalid JSON: __json__",
+      "invalid_merge_context": "Invalid merge context: __context__"
+    },
+    "label": {
+      "action": "Action",
+      "alternate_tags": "Use alternate template tags for the data field",
+      "block_input_overrides": "Block input overrides",
+      "data": "Data",
+      "load_example_data": "Load example data",
+      "merge_context": "Merge context",
+      "name": "Name",
+      "queue": "Queue",
+      "queue_option": {
+        "queue_all": "all messages",
+        "queue_first": "first message only",
+        "queue_last": "last message only",
+        "queue_none": "don't queue messages"
+      },
+      "server": "Server",
+      "show_debug": "Show debug information",
+      "targets": "Targets",
+      "unknown_action": "Unknown action"
+    },
+    "status": {
+      "action_called": "__domain__.__service__ called"
+    }
+  }
+}

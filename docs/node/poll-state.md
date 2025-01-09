@@ -1,6 +1,6 @@
 # Poll State
 
-Polls for the state at regular intervals, optionally also outputting at the start and when the state changes. Useful for either alert for non-communicating devices (time since change > 1 day for example) or dashboard graphs with consistent interval charts
+The Poll State node outputs the state of an entity at regular intervals. It can also be configured to trigger at startup and whenever the entity changes state, if desired. This node is useful for regularly checking the status of an entity, ensuring your automations stay up to date with the latest information.
 
 ## Configuration
 
@@ -50,19 +50,19 @@ Creates a switch within Home Assistant to enable/disable this node. This feature
 
 entity_id of changed entity
 
-### payload.data
+### payload
 
 - Type: `object`
 
 The last known state of the entity
 
-### payload.data.timeSinceChanged
+### data.timeSinceChanged
 
 - Type: `string`
 
 Human readable format string of time since last updated, example "1 hour ago"
 
-### payload.data.timeSinceChangedMs
+### data.timeSinceChangedMs
 
 - Type: `number`
 
@@ -71,9 +71,3 @@ Number of milliseconds since last changed
 ## References
 
 - [Home Assistant State Objects](https://home-assistant.io/docs/configuration/state_object/)
-
-## Changelog
-
-#### Version 1
-
-- "if state"/"halt if" will now send the message to the first output if true and to the second if not. The old behavior, sending the message to the second output if true, will continue to be in place until you edit one of the existing nodes via the UI and at that time the outputs will automatically be switched.

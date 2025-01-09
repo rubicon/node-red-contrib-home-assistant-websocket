@@ -1,12 +1,11 @@
-/* eslint-disable @typescript-eslint/ban-ts-comment */
 import Debug from 'debug';
 import { EventEmitter } from 'events';
 import { HassEntities } from 'home-assistant-js-websocket';
 
-import { STATE_CONNECTED } from '../const';
+import { NO_VERSION } from '../const';
 import { HassTags } from '../types/home-assistant';
 import httpAPI from './Http';
-import websocketAPI from './Websocket';
+import websocketAPI, { ClientState } from './Websocket';
 
 const debug = Debug('home-assistant');
 const websocketMethods: string[] = [
@@ -33,7 +32,8 @@ const httpMethods: string[] = [
 ];
 
 export default class HomeAssistant {
-    private eventsList: { [nodeId: string]: string } = {};
+    // TODO: this can be made private after typescript conversion
+    public eventsList: { [nodeId: string]: string } = {};
 
     eventBus: EventEmitter;
     http: httpAPI;
@@ -58,19 +58,19 @@ export default class HomeAssistant {
     }
 
     get isConnected(): boolean {
-        return this.websocket.connectionState === STATE_CONNECTED;
+        return this.websocket.connectionState === ClientState.Connected;
     }
 
     get isHomeAssistantRunning(): boolean {
         return this.isConnected && this.websocket.isHomeAssistantRunning;
     }
 
-    get integrationVersion(): string | number {
+    get integrationVersion(): string {
         return this.websocket.integrationVersion;
     }
 
     get isIntegrationLoaded(): boolean {
-        return this.integrationVersion !== 0;
+        return this.integrationVersion !== NO_VERSION;
     }
 
     get connectionState(): number {
@@ -79,7 +79,7 @@ export default class HomeAssistant {
 
     get version(): string {
         const client = this?.websocket?.client;
-        return client?.haVersion ?? '0.0.0';
+        return client?.haVersion ?? NO_VERSION;
     }
 
     // TODO: remove after typescript conversion done
@@ -87,7 +87,7 @@ export default class HomeAssistant {
     exposeMethods(cls: any, methods: string[]): void {
         methods.forEach((method) => {
             if (typeof cls[method] === 'function') {
-                // @ts-ignore
+                // @ts-ignore - needs to remove in the future
                 this[method] = cls[method].bind(cls);
             }
         });
@@ -104,22 +104,18 @@ export default class HomeAssistant {
         return this?.websocket?.tags ?? [];
     }
 
-    // TODO: remove after typescript conversion done
     subscribeEvents(): Promise<void> {
         return this.websocket.subscribeEvents(this.eventsList);
     }
 
     close(): void {
-        const client = this?.websocket?.client;
-        if (client) {
-            client.close();
-        }
+        this?.websocket?.close();
     }
 
     addListener(
         event: string,
         handler: { (): void },
-        options = { once: false }
+        options = { once: false },
     ): void {
         if (options.once === true) {
             this.eventBus.once(event, handler);

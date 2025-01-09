@@ -1,7 +1,6 @@
 # Events: all
 
-Listens for all types of events from Home Assistant with the ability to filter
-by event type.
+This node listens for all types of events from Home Assistant, with the ability to filter by event type. It’s a powerful tool for triggering automations based on specific events occurring within Home Assistant, such as state changes, sensor readings, or user interactions.
 
 ## Configuration
 
@@ -24,15 +23,21 @@ overload the WebSocket message queue.
 [GitHub Issue #153](https://github.com/zachowj/node-red-contrib-home-assistant-websocket/issues/153#issuecomment-539290950)
 :::
 
+### Event data
+
+- Type: `json`
+
+A JSON object that will be compared to the event data. If this JSON is a subset of the event data object, the event will be emitted.
+
 ### Output only after Home Assistant is running
 
 - Type: `boolean`
 
-What until Home Assistant has reported its state as `running` before outputing events. Client events will always output.
+What until Home Assistant has reported its state as `running` before outputting events. Client events will always output.
 
-### Expose to Home Assistant
+### Expose as
 
-- Type: `boolean`
+- Type: `entity config`
 
 Creates a switch within Home Assistant to enable/disable this node. This feature
 requires [Node-RED custom integration](https://github.com/zachowj/hass-node-red)

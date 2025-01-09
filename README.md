@@ -15,8 +15,9 @@ Documentation can be found [here](https://zachowj.github.io/node-red-contrib-hom
 Have Node-RED installed and working, if you need to
 install Node-RED see [here](https://nodered.org/docs/getting-started/installation).
 
-- [Node.js](https://nodejs.org) v10.0 or newer
-- [Node-RED](https://nodered.org/) v1.0 or newer
+- [Node.js](https://nodejs.org) v18.2.0+
+- [Node-RED](https://nodered.org/) v3.1.1+
+- [Home Assistant](https://home-assistant.io) v2024.3+
 
 ### Installation
 
@@ -42,71 +43,6 @@ Under the server node config just check the checkbox for `I use the Home Assista
 
 The add-on can be found here: <https://github.com/hassio-addons/addon-node-red#readme>
 
-## Nodes
-
-The installed nodes have more detailed information in the Node-RED info pane shown when the node is selected. Below is a quick summary
-
-#### All Events
-
-Listens for all types of events from home assistant with the ability to filter by event type
-
-#### State Changed Event
-
-Listens for only `state_changed` events from home assistant
-
-#### State Trigger
-
-Much like the `State Changed Node` however provides some advanced functionality around common automation use cases.
-
-#### Poll State
-
-Outputs the state of an entity at regular intervals, optionally also at startup
-and every time the entity changes if desired
-
-#### Webhook
-
-_Need [Custom Integration](https://github.com/zachowj/hass-node-red) installed in Home Assistant for node to function_
-
-Outputs the data received from the created webhook in Home Assistant
-
-#### Call Service
-
-Sends a request to home assistant for any domain and service available ( `light/turn_on`, `input_select/select_option`, etc..)
-
-#### Entity
-
-_Need [Custom Integration](https://github.com/zachowj/hass-node-red) installed in Home Assistant for node to function_
-
-Creates an entity in Home Assistant which can be manipulated from this node
-
-#### Fire Event
-
-Fire an event on the event bus
-
-#### Current State
-
-Fetches the last known state for any entity on input
-
-#### Get Entities
-
-Get entities based on search criteria with 3 different output options
-
-#### Get History
-
-Fetches HomeAssistant history on input
-
-#### Get Template
-
-Allows rendering of templates on input
-
-#### Wait Until
-
-When an input is received the node will wait until the condition is met or the timeout occurs then will pass on the last received message
-
-#### Zone
-
-Outputs when one of the configured entities enter or leaves one of the defined zones.
-
 ## Contribute
 
 - [Setting up Development Environment](https://zachowj.github.io/node-red-contrib-home-assistant-websocket/guide/development.html)
@@ -116,7 +52,7 @@ Outputs when one of the configured entities enter or leaves one of the defined z
 
 [List of all contributors](https://github.com/zachowj/node-red-contrib-home-assistant-websocket/graphs/contributors)
 
-[buildstatus-shield]: https://img.shields.io/github/workflow/status/zachowj/node-red-contrib-home-assistant-websocket/CI/dev?label=dev%20build&style=for-the-badge
+[buildstatus-shield]: https://img.shields.io/github/actions/workflow/status/zachowj/node-red-contrib-home-assistant-websocket/ci.yml?branch=main&style=for-the-badge
 [buildstatus-link]: https://github.com/zachowj/node-red-contrib-home-assistant-websocket/actions
 [license-shield]: https://img.shields.io/github/license/zachowj/node-red-contrib-home-assistant-websocket.svg?style=for-the-badge
 [release-link]: https://github.com/zachowj/node-red-contrib-home-assistant-websocket/releases

@@ -1,6 +1,6 @@
 # Webhook
 
-Outputs the data received from the created webhook in Home Assistant
+The Webhook node outputs data received from a created webhook in Home Assistant. Webhooks are a way to receive data or trigger automations from external sources, and this node allows you to integrate those triggers into your Node-RED flows.
 
 ::: warning
 _Needs [Custom Integration](https://github.com/zachowj/hass-node-red) installed
@@ -9,23 +9,23 @@ in Home Assistant for this node to function_
 
 ## Configuration
 
-### ID
+### ID <Badge text="required"/>
 
 - Type: `string`
 
 A string to be used for the webhook URL in Home Assistant.
 
-### Payload
+### Allowed Methods <Badge text="required"/>
+
+- Type: `list`
+
+A list of allowed methods that Home Assistant will accept for the webhook. At least one method must be selected.
+
+### Expose as
 
 - Type: `string`
 
-Customizable location for the webhook payload. Defaults to msg.payload
-
-### Headers
-
-- Type: `number`
-
-Customizable location for the webhook request headers.
+When an entity is selected a switch entity will be created in Home Assistant. Turning on and off this switch will disable/enable the nodes in Node-RED.
 
 ## Outputs
 

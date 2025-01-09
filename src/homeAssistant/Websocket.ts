@@ -1,7 +1,6 @@
 import Debug from 'debug';
 import { EventEmitter } from 'events';
 import {
-    callService,
     Connection,
     createConnection,
     ERR_CANNOT_CONNECT,
@@ -15,6 +14,9 @@ import {
     HassEntity,
     HassEvent,
     HassServices,
+    HassServiceTarget,
+    HassUser,
+    HaWebSocket,
     MessageBase,
     subscribeConfig,
     subscribeEntities,
@@ -23,41 +25,51 @@ import {
 import { cloneDeep } from 'lodash';
 
 import {
-    HA_EVENT_AREA_REGISTRY_UPDATED,
-    HA_EVENT_DEVICE_REGISTRY_UPDATED,
     HA_EVENT_INTEGRATION,
-    HA_EVENT_STATE_CHANGED,
-    HA_EVENT_TAG_SCANNED,
+    HA_EVENT_SERVICES_UPDATED,
     HA_EVENTS,
+    HA_MIN_VERSION,
     INTEGRATION_EVENT,
     INTEGRATION_LOADED,
     INTEGRATION_NOT_LOADED,
     INTEGRATION_UNLOADED,
-    STATE_CONNECTED,
-    STATE_CONNECTING,
-    STATE_DISCONNECTED,
-    STATE_ERROR,
+    NO_VERSION,
 } from '../const';
+import { RED } from '../globals';
 import {
+    HassArea,
     HassAreas,
+    HassDevice,
     HassDeviceActions,
     HassDeviceCapabilities,
     HassDevices,
     HassDeviceTriggers,
+    HassEntityRegistry,
+    HassEntityRegistryEntry,
+    HassFloor,
+    HassLabel,
+    HassTag,
     HassTags,
     HassTranslations,
-    HassUser,
     SubscriptionUnsubscribe,
 } from '../types/home-assistant';
-import { Credentials } from './';
-import { subscribeAreaRegistry, subscribeDeviceRegistry } from './collections';
-import createSocket from './createSocket';
+import { Credentials, HaEvent } from './';
+import {
+    subscribeAreaRegistry,
+    subscribeDeviceRegistry,
+    subscribeEntityRegistry,
+    subscribeFloorRegistry,
+    subscribeLabelRegistry,
+} from './collections';
+import createSocket, { atLeastHaVersion } from './createSocket';
+import { startHeartbeat, StopHeartbeat } from './heartbeat';
 
 const debug = Debug('home-assistant:ws');
 
 export type WebsocketConfig = Credentials & {
     rejectUnauthorizedCerts: boolean;
     connectionDelay: boolean;
+    heartbeatInterval: number;
 };
 
 type HassTranslationsResponse = {
@@ -65,168 +77,275 @@ type HassTranslationsResponse = {
 };
 
 type HassDeviceCapabilitiesResponse = {
-    // eslint-disable-next-line camelcase
     extra_fields: HassDeviceCapabilities;
 };
 
+export enum ClientState {
+    Connecting = 0,
+    Connected = 1,
+    Disconnected = 2,
+    Error = 3,
+    Running = 4,
+}
+
+export enum ClientEvent {
+    Close = 'ha_client:close',
+    Connected = 'ha_client:connected',
+    Connecting = 'ha_client:connecting',
+    Error = 'ha_client:error',
+    InitialConnectionReady = 'initial_connection_ready',
+    Integration = 'integration',
+    Open = 'ha_client:open',
+    Ready = 'ha_client:ready',
+    RegistriesLoaded = 'ha_client:registries_loaded',
+    Running = 'ha_client:running',
+    ServicesLoaded = 'ha_client:services_loaded',
+    StatesLoaded = 'ha_client:states_loaded',
+}
+
 export default class Websocket {
-    private servicesLoaded = false;
-    private statesLoaded = false;
-    private subscribedEvents = new Set<string>();
-    private unsubCallback: { [id: string]: () => void } = {};
+    readonly #config: WebsocketConfig;
+    readonly #eventBus: EventEmitter;
+    #servicesLoaded = false;
+    #statesLoaded = false;
+    #stopHeartbeat?: StopHeartbeat;
+    #subscribedEvents = new Set<string>();
+    #unsubCallback: { [id: string]: () => void } = {};
+    #isAreaRegistryLoaded = false;
+    #isDeviceRegistryLoaded = false;
+    #isEntityRegistryLoaded = false;
+    #isFloorRegistryLoaded = false;
+    #isLabelRegistryLoaded = false;
+    #isAllRegistriesLoaded = false;
 
     areas: HassAreas = [];
     client!: Connection;
     devices: HassDevices = [];
-    connectionState = STATE_DISCONNECTED;
-    integrationVersion: string | number = 0;
+    entities: HassEntityRegistry = new Map();
+    floors: HassFloor[] = [];
+    labels: HassLabel[] = [];
+    connectionState = ClientState.Disconnected;
+    integrationVersion = NO_VERSION;
     isHomeAssistantRunning = false;
     states: HassEntities = {};
     services: HassServices = {};
     tags: HassTags | null = null;
 
-    constructor(
-        private config: WebsocketConfig,
-        private eventBus: EventEmitter
-    ) {
-        this.eventBus.on(
-            'ha_client:connecting',
-            this.onClientConnecting.bind(this)
+    constructor(config: WebsocketConfig, eventBus: EventEmitter) {
+        this.#config = config;
+        this.#eventBus = eventBus;
+
+        this.#eventBus.on(
+            ClientEvent.Connecting,
+            this.onClientConnecting.bind(this),
         );
-        this.onStatesLoadedAndRunning('initial_connection_ready');
+        this.onStatesLoadedAndRunning(ClientEvent.InitialConnectionReady);
     }
 
-    private emitEvent(event: string, data?: any) {
-        return this.eventBus.emit(event, data);
+    get isConnected(): boolean {
+        return this.connectionState === ClientState.Connected;
+    }
+
+    get isStatesLoaded(): boolean {
+        return this.#statesLoaded;
+    }
+
+    #emitEvent(event: string, data?: any) {
+        return this.#eventBus.emit(event, data);
     }
 
     async connect(): Promise<void> {
         // Convert from http:// -> ws://, https:// -> wss://
-        const url = `ws${this.config.host.substr(4)}/api/websocket`;
+        const url = `ws${this.#config.host.substring(4)}/api/websocket`;
 
         const auth = {
             type: 'auth',
-            access_token: this.config.access_token,
+            access_token: this.#config.access_token,
         };
 
         this.client = await createConnection({
             createSocket: () =>
                 createSocket({
                     auth,
-                    connectionDelay: this.config.connectionDelay,
-                    eventBus: this.eventBus,
+                    connectionDelay: this.#config.connectionDelay,
+                    eventBus: this.#eventBus,
                     rejectUnauthorizedCerts:
-                        this.config.rejectUnauthorizedCerts,
+                        this.#config.rejectUnauthorizedCerts,
                     url,
-                }),
+                }) as unknown as Promise<HaWebSocket>,
         }).catch((e) => {
-            this.connectionState = STATE_ERROR;
-            this.emitEvent('ha_client:error');
+            this.connectionState = ClientState.Error;
+            this.#emitEvent(ClientEvent.Error);
+
             // Handle connection errors
+            let message: string | undefined;
             switch (e) {
                 case ERR_CANNOT_CONNECT:
-                    throw new Error('Cannot connect to Home Assistant server');
+                    message = RED._('home-assistant.error.cannot-connect');
+                    break;
                 case ERR_INVALID_AUTH:
-                    throw new Error(
-                        'Invalid access token or password for websocket'
-                    );
+                    message = RED._('home-assistant.error.invalid_auth');
+                    break;
                 case ERR_CONNECTION_LOST:
-                    throw new Error('connection lost');
+                    message = RED._('home-assistant.error.connection_lost');
+                    break;
                 case ERR_HASS_HOST_REQUIRED:
-                    throw new Error('Base URL not set in server config');
+                    message = RED._('home-assistant.error.hass_host_required');
+                    break;
                 case ERR_INVALID_HTTPS_TO_HTTP:
-                    throw new Error('ERR_INVALID_HTTPS_TO_HTTP');
+                    message = 'ERR_INVALID_HTTPS_TO_HTTP';
+                    break;
             }
-            throw e;
+
+            throw message ? new Error(message) : e;
         });
 
         // Check if user has admin privileges
-        await this.checkUserType();
+        await this.#checkUserType();
+        // Check if Home Assistant version is supported
+        this.#checkHomeAssistantVersion();
 
         this.onClientOpen();
         // emit connected for only the first connection to the server
         // so we can setup certain things only once like registerEvents
-        this.emitEvent('ha_client:connected');
-        this.clientEvents();
-        this.haEvents();
+        this.#emitEvent(ClientEvent.Connected);
+        this.#clientEvents();
+        this.#haEvents();
     }
 
-    private async checkUserType() {
-        const user = (await this.getUser()) as HassUser;
-        if (user.is_admin === false) {
-            this.connectionState = STATE_ERROR;
+    #checkHomeAssistantVersion() {
+        const [major, minor, patch] = HA_MIN_VERSION.split('.').map(Number);
+        if (!atLeastHaVersion(this.client.haVersion, major, minor, patch)) {
+            this.connectionState = ClientState.Error;
             this.client.close();
             throw new Error(
-                'User required to have admin privileges in Home Assistant'
+                RED._('home-assistant.error.ha_version_not_supported', {
+                    version: this.client.haVersion,
+                    min_version: HA_MIN_VERSION,
+                }),
             );
         }
     }
 
-    getUser(): Promise<HassUser> {
-        return getUser(this.client) as Promise<HassUser>;
+    async #checkUserType() {
+        const user = await this.getUser();
+        if (user.is_admin === false) {
+            this.connectionState = ClientState.Error;
+            this.client.close();
+            throw new Error(RED._('home-assistant.error.user_not_admin'));
+        }
     }
 
-    private clientEvents() {
+    getUser(): Promise<HassUser> {
+        return getUser(this.client);
+    }
+
+    #clientEvents() {
         // Client events
         this.client.addEventListener('ready', this.onClientOpen.bind(this));
         this.client.addEventListener(
             'disconnected',
-            this.onClientClose.bind(this)
+            this.onClientClose.bind(this),
         );
         this.client.addEventListener(
             'reconnect-error',
-            this.onClientError.bind(this)
+            this.onClientError.bind(this),
         );
     }
 
-    private async haEvents() {
+    async #haEvents() {
         // Home Assistant Events
         await this.client.subscribeEvents<HassEvent>(
-            (evt) => this.integrationEvent(evt),
-            HA_EVENT_INTEGRATION
+            (evt) => this.#integrationEvent(evt),
+            HA_EVENT_INTEGRATION,
         );
         subscribeConfig(this.client, (config) =>
-            this.onClientConfigUpdate(config)
+            this.onClientConfigUpdate(config),
         );
-
         subscribeEntities(this.client, this.onClientStates.bind(this));
         subscribeServices(this.client, this.onClientServices.bind(this));
 
         subscribeAreaRegistry(this.client, (areas) => {
-            this.emitEvent(HA_EVENT_AREA_REGISTRY_UPDATED, areas);
+            this.#isAreaRegistryLoaded = true;
             this.areas = areas;
+            this.#checkIfAllRegistriesLoaded();
+            this.#emitEvent(HaEvent.AreaRegistryUpdated, areas);
         });
         subscribeDeviceRegistry(this.client, (devices) => {
-            this.emitEvent(HA_EVENT_DEVICE_REGISTRY_UPDATED, devices);
+            this.#isDeviceRegistryLoaded = true;
             this.devices = devices;
+            this.#checkIfAllRegistriesLoaded();
+            this.#emitEvent(HaEvent.DeviceRegistryUpdated, devices);
+        });
+        subscribeEntityRegistry(this.client, (entities) => {
+            this.#isEntityRegistryLoaded = true;
+            entities.forEach((entity) =>
+                this.entities.set(entity.entity_id, entity),
+            );
+            this.#checkIfAllRegistriesLoaded();
+            this.#emitEvent(HaEvent.EntityRegistryUpdated, entities);
+        });
+        subscribeFloorRegistry(this.client, (floors) => {
+            this.#isFloorRegistryLoaded = true;
+            this.floors = floors;
+            this.#checkIfAllRegistriesLoaded();
+            this.#emitEvent(HaEvent.FloorRegistryUpdated, floors);
+        });
+        subscribeLabelRegistry(this.client, (labels) => {
+            this.#isLabelRegistryLoaded = true;
+            this.labels = labels;
+            this.#checkIfAllRegistriesLoaded();
+            this.#emitEvent(HaEvent.LabelRegistryUpdated, labels);
         });
     }
 
-    private onHomeAssistantRunning() {
-        if (!this.isHomeAssistantRunning) {
-            this.isHomeAssistantRunning = true;
-            this.emitEvent('ha_client:running');
-            if (this.integrationVersion === 0) {
-                this.createIntegrationEvent(INTEGRATION_NOT_LOADED);
-            }
+    #checkIfAllRegistriesLoaded() {
+        if (
+            !this.#isAllRegistriesLoaded &&
+            this.#isAreaRegistryLoaded &&
+            this.#isDeviceRegistryLoaded &&
+            this.#isEntityRegistryLoaded &&
+            this.#isFloorRegistryLoaded &&
+            this.#isLabelRegistryLoaded &&
+            this.isStatesLoaded &&
+            this.#servicesLoaded &&
+            this.isHomeAssistantRunning
+        ) {
+            this.#emitEvent(ClientEvent.RegistriesLoaded);
+            this.#isAllRegistriesLoaded = true;
         }
     }
 
-    private integrationEvent(evt: Partial<HassEvent>) {
+    get isAllRegistriesLoaded(): boolean {
+        return this.#isAllRegistriesLoaded;
+    }
+
+    #onHomeAssistantRunning() {
+        if (!this.isHomeAssistantRunning) {
+            this.isHomeAssistantRunning = true;
+            this.#emitEvent(ClientEvent.Running);
+            if (this.integrationVersion === NO_VERSION) {
+                this.createIntegrationEvent(INTEGRATION_NOT_LOADED);
+            }
+            this.#checkIfAllRegistriesLoaded();
+        }
+    }
+
+    #integrationEvent(evt: Partial<HassEvent>) {
         const oldVersion = this.integrationVersion;
         switch (evt?.data?.type) {
             case INTEGRATION_LOADED:
                 this.integrationVersion = evt.data.version;
                 break;
             case INTEGRATION_UNLOADED:
-                this.integrationVersion = 0;
+                this.integrationVersion = NO_VERSION;
                 break;
             case INTEGRATION_NOT_LOADED:
-                this.emitEvent(INTEGRATION_EVENT, evt.data.type);
+                this.#emitEvent(INTEGRATION_EVENT, evt.data.type);
                 return;
         }
         if (oldVersion !== this.integrationVersion) {
-            this.emitEvent(INTEGRATION_EVENT, evt?.data?.type);
+            this.#emitEvent(INTEGRATION_EVENT, evt?.data?.type);
         }
     }
 
@@ -235,58 +354,58 @@ export default class Websocket {
 
         // If events contains '__ALL__' register all events and skip individual ones
         if (currentEvents.has('__ALL__')) {
-            if (this.subscribedEvents.has('__ALL__')) {
+            if (this.#subscribedEvents.has('__ALL__')) {
                 // Nothing to do
                 return;
             }
 
-            this.subscribedEvents.forEach((e) => {
+            this.#subscribedEvents.forEach((e) => {
                 if (e !== '__ALL__') {
-                    this.unsubCallback[e]();
-                    delete this.unsubCallback[e];
-                    this.subscribedEvents.delete(e);
+                    this.#unsubCallback[e]();
+                    delete this.#unsubCallback[e];
+                    this.#subscribedEvents.delete(e);
                 }
             });
 
             // subscribe to all event and save unsubscribe callback
-            this.unsubCallback.__ALL__ =
+            this.#unsubCallback.__ALL__ =
                 await this.client.subscribeEvents<HassEvent>((ent) =>
-                    this.onClientEvents(ent)
+                    this.onClientEvents(ent),
                 );
 
-            this.subscribedEvents.add('__ALL__');
+            this.#subscribedEvents.add('__ALL__');
             return;
         }
 
         // Always need the state_changed event
-        currentEvents.add(HA_EVENT_STATE_CHANGED);
-        currentEvents.add(HA_EVENT_TAG_SCANNED);
+        currentEvents.add(HaEvent.StateChanged);
+        currentEvents.add(HaEvent.TagScanned);
 
         const add = new Set(
-            [...currentEvents].filter((x) => !this.subscribedEvents.has(x))
+            [...currentEvents].filter((x) => !this.#subscribedEvents.has(x)),
         );
         const remove = new Set(
-            [...this.subscribedEvents].filter((x) => !currentEvents.has(x))
+            [...this.#subscribedEvents].filter((x) => !currentEvents.has(x)),
         );
 
         // Create new subscription list
-        this.subscribedEvents = new Set([
-            ...[...currentEvents].filter((x) => this.subscribedEvents.has(x)),
+        this.#subscribedEvents = new Set([
+            ...[...currentEvents].filter((x) => this.#subscribedEvents.has(x)),
             ...add,
         ]);
 
         // Remove unused subscriptions
         remove.forEach((e) => {
-            this.unsubCallback[e]();
-            delete this.unsubCallback[e];
+            this.#unsubCallback[e]();
+            delete this.#unsubCallback[e];
         });
 
         // Subscribe to each event type and save each unsubscribe callback
         for (const type of add) {
-            this.unsubCallback[type] =
+            this.#unsubCallback[type] =
                 await this.client.subscribeEvents<HassEvent>(
                     (ent) => this.onClientEvents(ent),
-                    type
+                    type,
                 );
         }
     }
@@ -294,12 +413,12 @@ export default class Websocket {
     subscribeMessage<Result>(
         callback: (result: Result) => void,
         subscribeMessage: MessageBase,
-        options: { resubscribe?: boolean }
+        options: { resubscribe?: boolean },
     ): Promise<SubscriptionUnsubscribe> {
         return this.client.subscribeMessage(
             callback,
             subscribeMessage,
-            options
+            options,
         );
     }
 
@@ -310,9 +429,10 @@ export default class Websocket {
 
         this.states = entities;
 
-        if (!this.statesLoaded) {
-            this.statesLoaded = true;
-            this.emitEvent('ha_client:states_loaded', this.states);
+        if (!this.#statesLoaded) {
+            this.#statesLoaded = true;
+            this.#emitEvent(ClientEvent.StatesLoaded, this.states);
+            this.#checkIfAllRegistriesLoaded();
         }
     }
 
@@ -322,22 +442,23 @@ export default class Websocket {
         }
 
         this.services = services;
-
-        if (!this.servicesLoaded) {
-            this.servicesLoaded = true;
-            this.emitEvent('ha_client:services_loaded', this.services);
+        this.#emitEvent(HA_EVENT_SERVICES_UPDATED, this.services);
+        if (!this.#servicesLoaded) {
+            this.#servicesLoaded = true;
+            this.#emitEvent(ClientEvent.ServicesLoaded);
+            this.#checkIfAllRegistriesLoaded();
         }
     }
 
-    onStatesLoadedAndRunning(event = 'ready'): void {
+    onStatesLoadedAndRunning(event: ClientEvent = ClientEvent.Ready): void {
         const statesLoaded = new Promise((resolve) => {
-            this.eventBus.once('ha_client:states_loaded', resolve);
+            this.#eventBus.once(ClientEvent.ServicesLoaded, resolve);
         });
         const homeAssinstantRunning = new Promise((resolve) => {
-            this.eventBus.once('ha_client:running', resolve);
+            this.#eventBus.once(ClientEvent.Running, resolve);
         });
         Promise.all([statesLoaded, homeAssinstantRunning]).then(([states]) => {
-            this.eventBus.emit(`ha_client:${event}`, states);
+            this.#eventBus.emit(event, states);
         });
     }
 
@@ -357,16 +478,16 @@ export default class Websocket {
             context: hassEvent.context,
         };
 
-        if (eventType === HA_EVENT_STATE_CHANGED) {
+        if (eventType === HaEvent.StateChanged) {
             const state = event?.event?.new_state;
             // Validate a minimum state_changed event
             if (state && entityId) {
                 this.states[entityId] = state;
             } else {
                 debug(
-                    `Not processing ${HA_EVENT_STATE_CHANGED} event: ${JSON.stringify(
-                        event
-                    )}`
+                    `Not processing ${HaEvent.StateChanged} event: ${JSON.stringify(
+                        event,
+                    )}`,
                 );
                 return;
             }
@@ -374,22 +495,22 @@ export default class Websocket {
 
         // Emit on the event type channel
         if (eventType) {
-            this.emitEvent(`${HA_EVENTS}:${eventType}`, event);
+            this.#emitEvent(`${HA_EVENTS}:${eventType}`, event);
 
             // Most specific emit for event_type and entity_id
             if (entityId) {
-                this.emitEvent(`${HA_EVENTS}:${eventType}:${entityId}`, event);
+                this.#emitEvent(`${HA_EVENTS}:${eventType}:${entityId}`, event);
             }
         }
 
         // Emit on all channel
-        this.emitEvent(`${HA_EVENTS}:all`, event);
+        this.#emitEvent(`${HA_EVENTS}:all`, event);
     }
 
     async onClientConfigUpdate(config: HassConfig): Promise<void> {
         if (
             config.components.includes('nodered') &&
-            this.integrationVersion === 0
+            this.integrationVersion === NO_VERSION
         ) {
             try {
                 const version = await this.getIntegrationVersion();
@@ -403,7 +524,7 @@ export default class Websocket {
 
         // Prior to HA 0.111.0 state didn't exist
         if (config.state === undefined || config.state === 'RUNNING') {
-            this.onHomeAssistantRunning();
+            this.#onHomeAssistantRunning();
         }
     }
 
@@ -426,25 +547,28 @@ export default class Websocket {
     }
 
     createIntegrationEvent(type: string, version?: string): void {
-        this.integrationEvent({
+        this.#integrationEvent({
             data: { type, version },
         });
     }
 
     onClientOpen(): void {
         this.onStatesLoadedAndRunning();
-        this.integrationVersion = 0;
+        this.integrationVersion = NO_VERSION;
         this.isHomeAssistantRunning = false;
-        this.connectionState = STATE_CONNECTED;
-        this.emitEvent('ha_client:open');
+        this.connectionState = ClientState.Connected;
+        if (this.#config.heartbeatInterval) {
+            this.#stopAssignedHeartbeat();
+            this.#stopHeartbeat = startHeartbeat(
+                this.client,
+                this.#config.heartbeatInterval,
+                this.#config.host,
+            );
+        }
+        this.#emitEvent(ClientEvent.Open);
     }
 
     onClientClose(): void {
-        this.integrationVersion = 0;
-        this.isHomeAssistantRunning = false;
-        this.connectionState = STATE_DISCONNECTED;
-        this.emitEvent('ha_client:close');
-
         debug('events connection closed, cleaning up connection');
         this.resetClient();
     }
@@ -452,88 +576,163 @@ export default class Websocket {
     onClientError(data: unknown): void {
         debug('events connection error, cleaning up connection');
         debug(data);
-        this.emitEvent('ha_client:error', data);
+        this.#emitEvent(ClientEvent.Error, data);
         this.resetClient();
     }
 
     onClientConnecting(): void {
-        this.connectionState = STATE_CONNECTING;
+        this.connectionState = ClientState.Connecting;
+    }
+
+    close(): void {
+        this.#stopAssignedHeartbeat();
+        this?.client?.close();
+    }
+
+    #stopAssignedHeartbeat(): void {
+        if (typeof this.#stopHeartbeat === 'function') {
+            const stopHeartbeat = this.#stopHeartbeat;
+            this.#stopHeartbeat = undefined;
+            stopHeartbeat();
+        }
     }
 
     resetClient(): void {
-        this.servicesLoaded = false;
-        this.statesLoaded = false;
-        this.connectionState = STATE_DISCONNECTED;
-        this.emitEvent('ha_client:close');
+        this.#stopAssignedHeartbeat();
+        this.integrationVersion = NO_VERSION;
+        this.isHomeAssistantRunning = false;
+        this.#servicesLoaded = false;
+        this.#statesLoaded = false;
+        this.#isAreaRegistryLoaded = false;
+        this.#isDeviceRegistryLoaded = false;
+        this.#isEntityRegistryLoaded = false;
+        this.#isFloorRegistryLoaded = false;
+        this.#isLabelRegistryLoaded = false;
+        this.connectionState = ClientState.Disconnected;
+        this.#emitEvent(ClientEvent.Close);
+    }
+
+    getAreas(): HassAreas {
+        return cloneDeep(this.areas);
+    }
+
+    getArea(areaId: string): HassArea | undefined {
+        return cloneDeep(this.areas.find((area) => area.area_id === areaId));
     }
 
     getDevices(): HassDevices {
-        return this.devices;
+        return cloneDeep(this.devices);
+    }
+
+    getDevice(deviceId: string): HassDevice | undefined {
+        return cloneDeep(this.devices.find((device) => device.id === deviceId));
     }
 
     async getDeviceActions(deviceId?: string): Promise<HassDeviceActions> {
-        if (!deviceId) return [];
+        if (!this.isConnected || !deviceId) return [];
 
-        return this.send<HassDeviceActions>({
+        const results = await this.send<HassDeviceActions>({
             type: 'device_automation/action/list',
             device_id: deviceId,
+        }).catch((e) => {
+            throw e;
         });
+
+        return results;
     }
 
     async getDeviceActionCapabilities(action: {
         [key: string]: any;
     }): Promise<HassDeviceCapabilities> {
-        if (!action) return [];
+        if (!this.isConnected || !action) return [];
 
         const results = await this.send<HassDeviceCapabilitiesResponse>({
             type: 'device_automation/action/capabilities',
             action,
+        }).catch((e) => {
+            throw e;
         });
 
         return results.extra_fields;
     }
 
     async getDeviceTriggers(deviceId?: string): Promise<HassDeviceTriggers> {
-        if (!deviceId) return [];
+        if (!this.isConnected || !deviceId) return [];
 
-        return this.send<HassDeviceTriggers>({
+        const results = await this.send<HassDeviceTriggers>({
             type: 'device_automation/trigger/list',
             device_id: deviceId,
+        }).catch((e) => {
+            throw e;
         });
+
+        return results;
     }
 
     async getDeviceTriggerCapabilities(trigger: {
         [key: string]: any;
     }): Promise<HassDeviceCapabilities> {
-        if (!trigger) return [];
+        if (!this.isConnected || !trigger) return [];
 
         const results = await this.send<HassDeviceCapabilitiesResponse>({
             type: 'device_automation/trigger/capabilities',
             trigger,
+        }).catch((e) => {
+            throw e;
         });
 
         return results.extra_fields;
     }
 
-    getStates(entityId?: string): HassEntity | HassEntities | null {
-        if (entityId) {
-            return this.states[entityId]
-                ? cloneDeep(this.states[entityId])
-                : null;
-        }
+    getEntities(): HassEntityRegistry {
+        return cloneDeep(this.entities);
+    }
 
+    getEntity(entityId: string): HassEntityRegistryEntry | undefined {
+        return cloneDeep(this.entities.get(entityId));
+    }
+
+    getFloors(): HassFloor[] {
+        return cloneDeep(this.floors);
+    }
+
+    getFloor(floorId: string): HassFloor | undefined {
+        return cloneDeep(
+            this.floors.find((floor) => floor.floor_id === floorId),
+        );
+    }
+
+    getLabels(): HassLabel[] {
+        return cloneDeep(this.labels);
+    }
+
+    getLabel(labelId: string): HassLabel | undefined {
+        return cloneDeep(
+            this.labels.find((label) => label.label_id === labelId),
+        );
+    }
+
+    getStates(): HassEntities {
         return cloneDeep(this.states);
+    }
+
+    getState(entityId: string): HassEntity | undefined {
+        return cloneDeep(this.states[entityId]);
     }
 
     getServices(): HassServices {
         return cloneDeep(this.services);
     }
 
+    getTag(tagId: string): HassTag | undefined {
+        return cloneDeep(this.tags?.find((tag) => tag.id === tagId));
+    }
+
     async getTranslations(
         category: string,
-        language: string
+        language: string,
     ): Promise<HassTranslations> {
-        if (!category) return [];
+        if (!this.isConnected || !category) return [];
 
         const results = await this.send<HassTranslationsResponse>({
             type: 'frontend/get_translations',
@@ -547,14 +746,31 @@ export default class Websocket {
     callService(
         domain: string,
         service: string,
-        data?: { [key: string]: any }
-    ): Promise<unknown> {
-        debug(`Call-Service: ${domain}.${service} ${JSON.stringify(data)}`);
-        return callService(this.client, domain, service, data);
+        data?: { [key: string]: any },
+        target?: HassServiceTarget,
+    ): Promise<Record<string, unknown>> {
+        const services = this.getServices();
+        const returnResponse = atLeastHaVersion(this.client.haVersion, 2023, 12)
+            ? !!services[domain]?.[service]?.response
+            : undefined;
+
+        const serviceCall = {
+            type: 'call_service',
+            domain,
+            service,
+            service_data: data,
+            target,
+            return_response: returnResponse,
+        };
+
+        return this.send(serviceCall);
     }
 
     send<Results>(data: MessageBase): Promise<Results> {
+        if (!this.isConnected) {
+            throw new Error('Client is not connected');
+        }
         debug(`Send: ${JSON.stringify(data)}`);
-        return this.client.sendMessagePromise(data);
+        return this.client?.sendMessagePromise(data);
     }
 }

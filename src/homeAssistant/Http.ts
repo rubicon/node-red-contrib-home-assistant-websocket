@@ -3,7 +3,7 @@ import Debug from 'debug';
 import { HassEntity } from 'home-assistant-js-websocket';
 import https from 'https';
 
-import { shouldInclude } from '../helpers/utils';
+import HomeAssistantError from '../common/errors/HomeAssistantError';
 import { Credentials } from './';
 
 const debug = Debug('home-assistant:http');
@@ -13,7 +13,7 @@ export type HttpConfig = Credentials & {
 };
 
 export default class Http {
-    private client: AxiosInstance;
+    #client: AxiosInstance;
 
     constructor(config: HttpConfig) {
         const apiOpts: AxiosRequestConfig = {
@@ -27,25 +27,21 @@ export default class Http {
             });
         }
 
-        this.client = axios.create(apiOpts);
+        this.#client = axios.create(apiOpts);
     }
 
     async getHistory(
-        timestamp: string,
-        filterEntityId: string,
-        endTimestamp: string,
-        {
-            include,
-            exclude,
-            flatten,
-        }: { include?: RegExp; exclude?: RegExp; flatten?: boolean } = {}
+        timestamp?: string | null,
+        filterEntityId?: string | null,
+        endTimestamp?: string | null,
+        flatten: boolean = false,
     ): Promise<HassEntity[][] | HassEntity[]> {
         let path = 'history/period';
 
         if (timestamp) {
             path = `${path}/${timestamp}`;
         }
-        // eslint-disable-next-line camelcase
+
         const params: { filter_entity_id?: string; end_time?: string } = {};
         if (filterEntityId) {
             params.filter_entity_id = filterEntityId;
@@ -56,21 +52,6 @@ export default class Http {
 
         // History returns an array for each entity_id and that array contains objects for each history item
         const results = await this.get<HassEntity[][]>(path, params);
-
-        // Filter out results by regex, include/exclude should already be an instance of RegEx
-        if (include || exclude) {
-            return results.reduce(
-                (acc: HassEntity[][], entityArr: HassEntity[]) => {
-                    const entityId = entityArr[0]?.entity_id ?? null;
-
-                    if (entityId && shouldInclude(entityId, include, exclude)) {
-                        acc.push(entityArr);
-                    }
-                    return acc;
-                },
-                []
-            );
-        }
 
         // Instead of returning the data from home assistant ( array for each entity_id ) return one flattened array
         // of one item per history entry
@@ -93,51 +74,114 @@ export default class Http {
         return results;
     }
 
-    fireEvent(event: string, data: { [key: string]: any }): Promise<unknown> {
-        return this.post(`events/${event}`, data);
-    }
-
     renderTemplate(templateString: string): Promise<string> {
         return this.post<string>(
             'template',
             { template: templateString },
-            'text'
+            'text',
         );
     }
 
     async post<T>(
         path: string,
         data: any = {},
-        responseType: ResponseType = 'json'
+        responseType: ResponseType = 'json',
     ): Promise<T> {
-        debug(`HTTP POST: ${this.client.defaults.baseURL}/${path}`);
+        debug(`HTTP POST: ${this.#client.defaults.baseURL}/${path}`);
 
-        this.client.defaults.responseType = responseType;
+        const response = await this.#client
+            .request({
+                method: 'post',
+                url: path,
+                data,
+                responseType,
+            })
+            .catch((err) => {
+                debug(`POST: request error: ${err.toString()}`);
+                if (err.response?.data?.message) {
+                    throw new HomeAssistantError(err.response.data);
+                }
+                throw err;
+            });
 
-        const response = await this.client.post(path, data).catch((err) => {
-            debug(`POST: request error: ${err.toString()}`);
-            throw err;
-        });
-
-        return response.data ?? '';
+        return responseType === 'json'
+            ? (response.data ?? '')
+            : (response.data as any);
     }
 
     async get<T>(
         path: string,
         params: any = {},
-        responseType: ResponseType = 'json'
+        responseType: ResponseType = 'json',
     ): Promise<T> {
-        debug(`HTTP GET: ${this.client.defaults.baseURL}/${path}`);
+        debug(`HTTP GET: ${this.#client.defaults.baseURL}/${path}`);
 
-        this.client.defaults.responseType = responseType;
-
-        const response = await this.client
-            .request({ url: path, params: params })
+        const response = await this.#client
+            .request({ method: 'get', url: path, params, responseType })
             .catch((err) => {
                 debug(`GET: request error: ${err.toString()}`);
+                if (err.response?.data?.message) {
+                    throw new HomeAssistantError(err.response.data);
+                }
                 throw err;
             });
 
-        return response.data ?? '';
+        return responseType === 'json'
+            ? (response.data ?? '')
+            : (response.data as any);
+    }
+
+    async put<T>(
+        path: string,
+        data: any = {},
+        responseType: ResponseType = 'json',
+    ): Promise<T> {
+        debug(`HTTP PUT: ${this.#client.defaults.baseURL}/${path}`);
+
+        const response = await this.#client
+            .request({
+                method: 'put',
+                url: path,
+                data,
+                responseType,
+            })
+            .catch((err) => {
+                debug(`PUT: request error: ${err.toString()}`);
+                if (err.response?.data?.message) {
+                    throw new HomeAssistantError(err.response.data);
+                }
+                throw err;
+            });
+
+        return responseType === 'json'
+            ? (response.data ?? '')
+            : (response.data as any);
+    }
+
+    async delete<T>(
+        path: string,
+        data: any = {},
+        responseType: ResponseType = 'json',
+    ): Promise<T> {
+        debug(`HTTP DELETE: ${this.#client.defaults.baseURL}/${path}`);
+
+        const response = await this.#client
+            .request({
+                method: 'delete',
+                url: path,
+                data,
+                responseType,
+            })
+            .catch((err) => {
+                debug(`DELETE: request error: ${err.toString()}`);
+                if (err.response?.data?.message) {
+                    throw new HomeAssistantError(err.response.data);
+                }
+                throw err;
+            });
+
+        return responseType === 'json'
+            ? (response.data ?? '')
+            : (response.data as any);
     }
 }

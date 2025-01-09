@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: main
@@ -13,58 +14,88 @@ on:
       - ".npmignore"
       - "package*.json"
 
+concurrency:
+  group: ci-${{ github.head_ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
-        node-version: [10, 12, 14]
+        node-version:
+          - 18
+          - 20
+        node-red-version:
+          - "^3"
+          - "3.1.1"
 
+    name: Tests (Node ${{ matrix.node-version }} - node-red ${{ matrix.node-red-version }})
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v1
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-      - name: npm install
-        run: npm ci
-      - name: Run Lint
-        uses: stefanoeb/eslint-action@1.0.0
-      - name: npm test
-        run: npm test
+          cache: pnpm
+      - name: pnpm install
+        run: pnpm install
+      - name: Install exact version of node-red
+        run: pnpm add -D node-red@${{ matrix.node-red-version }}
+      - name: pnpm lint
+        run: pnpm run lint
+      - name: pnpm test
+        run: pnpm test
         env:
           CI: true
 
   release-please:
-    if: github.event_name == 'push'
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: GoogleCloudPlatform/release-please-action@v2
+      - uses: GoogleCloudPlatform/release-please-action@v4
         id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          release-type: node
-          package-name: node-red-contrib-home-assistant-websocket
-          changelog-types: '[{"type":"feat","section":"Features","hidden":false},{"type":"fix","section":"Bug Fixes","hidden":false},{"type":"docs","section":"Documentation","hidden":false}]'
-          bump-minor-pre-major: true
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@v1
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      release_version: ${{ steps.release.outputs.major }}.${{ steps.release.outputs.minor }}.${{ steps.release.outputs.patch }}
+      release_tag: ${{ steps.release.outputs.tag_name }}
+
+  upload-assets:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 12
-      - run: npm ci
-      - id: publish
-        uses: JS-DevTools/npm-publish@v1
-        with:
-          token: ${{ secrets.npm_token }}
-        if: ${{ steps.release.outputs.release_created }}
-      - run: |
-          echo "Version changed: ${{ steps.publish.outputs.old-version }} => ${{ steps.publish.outputs.version }}"
-        if: steps.publish.outputs.type != 'none'
-      - name: npm next release
-        uses: epeli/npm-release@v1
-        with:
-          type: prerelease
-          token: ${{ secrets.npm_token }}
-        if: ${{ !steps.release.outputs.release_created }}
+          cache: pnpm
+      - name: pnpm install
+        run: pnpm install
+      - name: build
+        run: pnpm run build
+      - name: Pack
+        run: pnpm pack
+      - name: Upload Release Asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload ${{ needs.release-please.outputs.release_tag }} ./node-red-contrib-home-assistant-websocket-${{ needs.release-please.outputs.release_version }}.tgz
+
+  publish:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    uses: zachowj/node-red-contrib-home-assistant-websocket/.github/workflows/publish.yml@main
+    secrets: inherit
+
+  publish-documentation:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    uses: zachowj/node-red-contrib-home-assistant-websocket/.github/workflows/documentation.yml@main
+    secrets: inherit

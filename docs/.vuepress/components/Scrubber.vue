@@ -22,37 +22,53 @@
 
         <button v-on:click="scrub">Scrub</button>
         <transition name="fade">
-            <span v-if="showError" class="error">Invalid JSON</span>
+            <span v-if="showError" class="popup error">Invalid JSON</span>
         </transition>
 
         <textarea v-model="after" ref="copyme"></textarea>
 
         <button v-on:click="copy">Copy to Clipboard</button>
         <transition name="fade">
-            <span v-if="showCopied" class="copied">Copied</span>
+            <span v-if="showCopied" class="popup copied">Copied</span>
         </transition>
     </div>
 </template>
 
 <script>
 const haNodes = [
-    'server',
+    'ha-api',
+    'api-call-service',
+    'api-current-state',
+    'ha-device',
+    'ha-entity',
     'server-events',
     'server-state-changed',
-    'trigger-state',
-    'poll-state',
-    'ha-time',
-    'ha-webhook',
-    'ha-zone',
-    'api-call-service',
-    'ha-entity',
     'ha-fire-event',
-    'api-current-state',
     'ha-get-entities',
     'api-get-history',
+    'poll-state',
     'api-render-template',
+    'ha-select',
+    'ha-sentence',
+    'trigger-state',
+    'ha-tag',
+    'ha-time',
     'ha-wait-until',
-    'ha-api',
+    'ha-webhook',
+    'ha-zone',
+
+    'server',
+    'ha-device-config',
+    'ha-entity-config',
+
+    'ha-binary-sensor',
+    'ha-button',
+    'ha-number',
+    'ha-sensor',
+    'ha-switch',
+    'ha-text',
+    'ha-time-entity',
+    'ha-update-config',
 ];
 
 export default {
@@ -110,25 +126,26 @@ export default {
         },
     },
     mounted() {
-        console.log(localStorage.serverId);
         if (localStorage.serverId) {
             this.serverId = localStorage.serverId;
         }
     },
     watch: {
         serverId(newId) {
-            console.log(newId);
             localStorage.serverId = newId;
         },
     },
 };
 </script>
 
-<style scoped lang="stylus">
+<style scoped lang="scss">
+$accentColor: var(--vp-c-accent);
+
 textarea {
     width: 100%;
     height: 10em;
     border-color: $accentColor;
+    border-style: solid;
 }
 
 button {
@@ -151,7 +168,7 @@ button {
 }
 
 button:hover {
-    background-color: lighten($accentColor, 10%);
+    background-color: var(--vp-c-accent-hover);
 }
 
 .fade-leave-active {
@@ -162,7 +179,8 @@ button:hover {
     opacity: 0;
 }
 
-span.error, span.copied {
+span.error,
+span.copied {
     font-weight: 600;
     display: inline-block;
     font-size: 14px;
@@ -173,10 +191,14 @@ span.error, span.copied {
     color: #fff;
 }
 .error {
-    background-color: $badgeErrorColor;
+    background-color: var(--c-danger);
 }
 
 .copied {
-    background-color: $badgeWarningColor;
+    background-color: var(--c-warning);
+}
+
+.popup {
+    margin-left: 10px;
 }
 </style>

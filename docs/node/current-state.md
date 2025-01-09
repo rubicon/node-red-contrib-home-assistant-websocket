@@ -1,6 +1,6 @@
 # Current State
 
-Returns the current state of an entity. Useful for using conditional logic to automation flows.
+This node is used to fetch the last known state of any entity within Home Assistant when it receives an input. It’s useful for making decisions based on the current status of entities, such as checking if a light is already on before turning it off, or determining the temperature reading before adjusting the thermostat.
 
 ## Configuration
 
@@ -23,6 +23,12 @@ output.
 
 - [Conditionals](/guide/conditionals.md)
 
+### For
+
+- Type: `number`
+
+The amount of time the entity state needs to have been constant for the "If state" to be `true`
+
 ### State Type
 
 - Type: `string`
@@ -31,41 +37,20 @@ output.
 
 Convert the state of the entity to the selected type. Boolean will be converted to true based on if the string is equal by default to (`y|yes|true|on|home|open`). Original value stored in `msg.data.original_state`
 
-### State Location
-
-- Type : `string`
-- Default: `msg.payload`
-
-Customizable location for the entity’s state.
-
-### Entity Location
-
-- Type : `string`
-- Default: `msg.data`
-
-Customizable location for the entity object. Defaults to
-
-### Override Topic
-
-- Type: `boolean`
-- Default: `false`
-
-Write entity id to msg.topic
-
 ### Block Input Overrides
 
 - Type: `boolean`
 - Default: `false`
 
-Stop msg.payload values from overriding local config
+Stop `msg.payload` values from overriding local config
 
 ## Inputs
 
-### payload.entity_id
+### payload.entityId
 
 - Type : `string`
 
-  Overrides or sets the entity_id for which the current state is being fetched
+  Overrides or sets the entity id for which the current state is being fetched
 
 ## Outputs
 

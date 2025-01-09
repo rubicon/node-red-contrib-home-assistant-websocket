@@ -1,0 +1,53 @@
+{
+  "ha-wait-until": {
+    "error": {
+      "entity_id_deprecated": "The `entityId` property is deprecated and will be removed in version 1.0. Please update your code to use the `entities` property instead.",
+      "entity_not_found": "Entity (__entityId__) could not be found",
+      "no_entities_provided": "At least one entity must be provided",
+      "not_found": "not found",
+      "invalid_timeout": "Invalid value for timeout: __timeout__"
+    },
+    "label": {
+      "block_input_overrides": "Block input overrides",
+      "check_current_state": "Check against current state",
+      "comparator_option": {
+        "does_not_include": "not in",
+        "greater_than": ">",
+        "greater_than_or_equal_to": ">=",
+        "includes": "in",
+        "is": "is",
+        "is_not": "is not",
+        "jsonata": "JSONata",
+        "less_than": "<",
+        "less_than_or_equal_to": "<="
+      },
+      "entity": "Entity",
+      "entity_filter_type_option": {
+        "exact": "exact",
+        "list": "list",
+        "regex": "regex",
+        "substring": "substring"
+      },
+      "name": "Name",
+      "server": "Server",
+      "timeout": "Timeout",
+      "timeout_units_option": {
+        "days": "days",
+        "hours": "hours",
+        "milliseconds": "milliseconds",
+        "minutes": "minutes",
+        "seconds": "seconds"
+      },
+      "wait_until": "Wait until"
+    },
+    "placeholder": {
+      "property": "property",
+      "value": "value"
+    },
+    "status": {
+      "timed_out": "timed out",
+      "true": "true",
+      "waiting": "waiting"
+    }
+  }
+}

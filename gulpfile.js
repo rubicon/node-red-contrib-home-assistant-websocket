@@ -13,12 +13,13 @@ const wrap = require('gulp-wrap');
 const { src, dest, series, task, watch, parallel } = require('gulp');
 
 const browserSync = require('browser-sync');
+const header = require('gulp-header');
 const nodemon = require('nodemon');
 
 // Source
 const buffer = require('gulp-buffer');
-const rollupPluginCommon = require('@rollup/plugin-commonjs')();
 const rollupStream = require('@rollup/stream');
+const rollupTypescript = require('@rollup/plugin-typescript');
 const source = require('vinyl-source-stream');
 
 // HTML
@@ -31,7 +32,7 @@ const terser = require('gulp-terser');
 const minify = require('cssnano');
 const postcss = require('gulp-postcss');
 const prefix = require('autoprefixer');
-const sass = require('gulp-sass')(require('node-sass'));
+const sass = require('gulp-sass')(require('sass'));
 
 // Markdown-It
 const cheerio = require('gulp-cheerio');
@@ -50,15 +51,28 @@ const uiFormWrap =
     '<script type="text/html" data-template-name="<%= data.type %>"><%= data.contents %></script>';
 const uiHelpWrap =
     '<script type="text/html" data-help-name="<%= data.type %>"><%= data.contents %></script>';
+const uiHandlebarsWrap =
+    '<script type="text/html" id="handlebars-<%= data.id %>" data-template-name="<%= data.type %>"><%= data.contents %></script>';
+const resourcePath = 'resources/node-red-contrib-home-assistant-websocket';
+const resourceFiles = [
+    `<link rel="stylesheet" href="${resourcePath}/virtual-select.v1.0.44.min.css">`,
+    `<script src="${resourcePath}/virtual-select.v1.0.44.min.js"></script>`,
+    `<script src="${resourcePath}/handlebars.min-v4.7.8.js"></script>`,
+];
 
 const nodeMap = {
+    action: { doc: 'action', type: 'api-call-service' },
     api: { doc: 'API', type: 'ha-api' },
-    'call-service': { doc: 'call-service', type: 'api-call-service' },
+    'binary-sensor': { doc: 'binary-sensor', type: 'ha-binary-sensor' },
+    button: { doc: 'button', type: 'ha-button' },
     'config-server': { doc: 'config-server', type: 'server' },
     'current-state': { doc: 'current-state', type: 'api-current-state' },
     device: { doc: 'device', type: 'ha-device' },
+    'device-config': { doc: 'device-config', type: 'ha-device-config' },
     entity: { doc: 'entity', type: 'ha-entity' },
+    'entity-config': { doc: 'entity-config', type: 'ha-entity-config' },
     'events-all': { doc: 'events-all', type: 'server-events' },
+    'events-calendar': { doc: 'events-calendar', type: 'ha-events-calendar' },
     'events-state': {
         doc: 'events-state',
         type: 'server-state-changed',
@@ -66,14 +80,26 @@ const nodeMap = {
     'fire-event': { doc: 'fire-event', type: 'ha-fire-event' },
     'get-entities': { doc: 'get-entities', type: 'ha-get-entities' },
     'get-history': { doc: 'get-history', type: 'api-get-history' },
+    number: { doc: 'number', type: 'ha-number' },
     'poll-state': { doc: 'poll-state', type: 'poll-state' },
     'render-template': { doc: 'render-template', type: 'api-render-template' },
+    select: { doc: 'select', type: 'ha-select' },
+    sensor: { doc: 'sensor', type: 'ha-sensor' },
+    sentence: { doc: 'sentence', type: 'ha-sentence' },
+    switch: { doc: 'switch', type: 'ha-switch' },
     tag: { doc: 'tag', type: 'ha-tag' },
+    text: { doc: 'text', type: 'ha-text' },
     time: { doc: 'time', type: 'ha-time' },
+    'time-entity': { doc: 'time-entity', type: 'ha-time-entity' },
     'trigger-state': { doc: 'trigger-state', type: 'trigger-state' },
+    'update-config': { doc: 'update-config', type: 'ha-update-config' },
     'wait-until': { doc: 'wait-until', type: 'ha-wait-until' },
     webhook: { doc: 'webhook', type: 'ha-webhook' },
     zone: { doc: 'zone', type: 'ha-zone' },
+};
+
+const editorMap = {
+    'entity-filter': 'ha_entity_filter',
 };
 
 let nodemonInstance;
@@ -111,8 +137,50 @@ const buildForm = lazypipe()
         wrap(
             uiFormWrap,
             { type: nodeMap[currentFilename].type },
-            { variable: 'data' }
-        )
+            { variable: 'data' },
+        ),
+    );
+
+const buildEditor = lazypipe()
+    .pipe(gulpHtmlmin, {
+        collapseWhitespace: true,
+        minifyCSS: true,
+    })
+    .pipe(() =>
+        wrap(
+            uiFormWrap,
+            { type: editorMap[currentFilename] },
+            { variable: 'data' },
+        ),
+    );
+
+const buildSidebar = lazypipe()
+    .pipe(gulpHtmlmin, {
+        collapseWhitespace: true,
+        minifyCSS: true,
+    })
+    .pipe(() => wrap(uiFormWrap, { type: 'ha_sidebar' }, { variable: 'data' }));
+
+const buildSidebarToolbar = lazypipe()
+    .pipe(gulpHtmlmin, {
+        collapseWhitespace: true,
+        minifyCSS: true,
+    })
+    .pipe(() =>
+        wrap(uiFormWrap, { type: 'ha_sidebar_toolbar' }, { variable: 'data' }),
+    );
+
+const buildHandlebars = lazypipe()
+    .pipe(gulpHtmlmin, {
+        collapseWhitespace: false,
+        minifyCSS: true,
+    })
+    .pipe(() =>
+        wrap(
+            uiHandlebarsWrap,
+            { id: currentFilename, type: 'x-tmpl-handlebars' },
+            { variable: 'data' },
+        ),
     );
 
 // Covert markdown documentation to html and modify it to look more like Node-RED
@@ -146,10 +214,10 @@ const buildHelp = lazypipe()
                             }
 
                             // opening tag
-                            return `<div class="custom-block ${
+                            return `<div class="home-assistant-custom-block ${
                                 m[1]
                             }">\n<p class="custom-block-title">${md.utils.escapeHtml(
-                                m[2] || title
+                                m[2] || title,
                             )}</p>\n`;
                         } else {
                             // closing tag
@@ -179,7 +247,7 @@ const buildHelp = lazypipe()
         $('badge').each((i, item) => {
             item.tagName = 'span';
             const $item = $(item)
-                .addClass('badge')
+                .addClass('home-assistant-badge')
                 .text(item.attribs.text || item.attribs.type);
             if (item.attribs.type) {
                 $item.addClass(item.attribs.type);
@@ -187,8 +255,8 @@ const buildHelp = lazypipe()
 
             return item;
         });
-        $('docs-only').remove();
-        $('info-panel-only').each((i, item) => {
+        $('docs-only, docsonly').remove();
+        $('info-panel-only, infopanelonly').each((i, item) => {
             item.tagName = 'div';
             return item;
         });
@@ -198,29 +266,25 @@ const buildHelp = lazypipe()
 
         // increase header element by one to conform to Node-RED titles being <h3></h3>
         $('h2,h3,h4,h5').each(
-            (i, item) => (item.tagName = `h${Number(item.tagName[1]) + 1}`)
+            (i, item) => (item.tagName = `h${Number(item.tagName[1]) + 1}`),
         );
 
         // Change relative links to the full address of docs
         $('a').each((i, item) => {
-            const href = $(item).attr('href');
-            if (href.startsWith('.') || href.startsWith('/')) {
-                $(item)
+            const $item = $(item);
+            const href = $item.attr('href');
+            if (href.startsWith('#')) {
+                $item.replaceWith($item.text());
+            } else if (href.startsWith('.') || href.startsWith('/')) {
+                $item
                     .attr('href', `${docsUrl}${href.replace('.md', '.html')}`)
                     .attr('rel', 'noopener noreferrer');
             }
         });
 
         $('h3').each((i, item) => {
-            const h3 = $(item);
-            const items = h3.nextUntil('h3');
-            // Remove Changelog from the end of the file
-            if (h3.text().toLowerCase() !== 'Changelog'.toLowerCase()) {
-                items.wrapAll('<dl class="message-properties" />');
-            } else {
-                h3.remove();
-                items.remove();
-            }
+            const items = $(item).nextUntil('h3');
+            items.wrapAll('<dl class="message-properties" />');
         });
 
         // Convert <p> inside <dl> to <dd>
@@ -253,66 +317,112 @@ const buildHelp = lazypipe()
         wrap(
             uiHelpWrap,
             { type: nodeMap[currentFilename].type },
-            { variable: 'data' }
-        )
+            { variable: 'data' },
+        ),
     );
 
-task('buildEditorFiles', (done) => {
-    const css = src(['ui/css/**/*.scss', 'ui/css/**/*.css', '!_*.scss']).pipe(
-        buildSass()
-    );
+task('buildEditorFiles', () => {
+    const css = src([
+        'src/editor/**/*.scss',
+        'src/nodes/**/*.scss',
+        '!_*.scss',
+    ]).pipe(buildSass());
 
-    const migrations = rollupStream({
-        input: 'src/migrations/index.js',
+    let cache;
+    const js = rollupStream({
+        input: 'src/editor.ts',
+        cache,
         output: {
             dir: editorFilePath,
             format: 'iife',
-            name: 'haMigrations',
         },
-        plugins: [rollupPluginCommon],
+        plugins: [
+            rollupTypescript({
+                tsconfig: 'tsconfig.editor.json',
+            }),
+        ],
         external: [],
     })
-        .pipe(source('migrations.js'))
+        .on('bundle', (bundle) => {
+            cache = bundle;
+        })
+        .pipe(source('editor.ts'))
         .pipe(buffer())
         .pipe(buildJs());
 
-    const js = src([
-        'ui/js/plugins/**/*.js',
-        'ui/js/common/**/*.js',
-        'ui/js/*.js',
-    ])
-        .pipe(concat('all.js'))
-        .pipe(buildJs());
+    const editorsHtml = src(['src/editor/editors/*.html']).pipe(
+        flatmap((stream, file) => {
+            const [filename] = file.basename.split('.');
 
-    const jsLibs = src(['ui/js/lib/*.js'])
-        .pipe(concat('lib.js'))
-        .pipe(buildJs());
+            currentFilename = filename;
+            return stream.pipe(buildEditor());
+        }),
+    );
+
+    const sidebarHtml = src(['src/editor/sidebar/index.html']).pipe(
+        flatmap((stream, file) => {
+            const [filename] = file.basename.split('.');
+
+            currentFilename = filename;
+            return stream.pipe(buildSidebar());
+        }),
+    );
+
+    const sidebarToolbarHtml = src(['src/editor/sidebar/toolbar.html']).pipe(
+        flatmap((stream, file) => {
+            const [filename] = file.basename.split('.');
+
+            currentFilename = filename;
+            return stream.pipe(buildSidebarToolbar());
+        }),
+    );
+
+    const handlebarsTemplates = src(['src/**/*.handlebars']).pipe(
+        flatmap((stream, file) => {
+            const [filename] = file.basename.split('.');
+
+            currentFilename = filename;
+            return stream.pipe(buildHandlebars());
+        }),
+    );
 
     const html = src([
-        'ui/html/*.html',
+        'src/nodes/**/*.html',
         `docs/node/*.md`,
-        `!docs/node/README.md`,
+        `!docs/node/index.md`,
     ]).pipe(
         flatmap((stream, file) => {
             const [filename, ext] = file.basename.split('.');
 
             if (ext === 'md') {
                 const key = Object.keys(nodeMap).find(
-                    (i) => nodeMap[i].doc === filename
+                    (i) => nodeMap[i].doc === filename,
                 );
                 currentFilename = key;
                 return stream.pipe(buildHelp());
             } else if (ext === 'html') {
-                currentFilename = filename;
+                const [, node] = file.path.match(
+                    /[\\/]src[\\/]nodes[\\/]([^\\/]+)[\\/]editor\.html/,
+                );
+                currentFilename = node;
                 return stream.pipe(buildForm());
             }
 
             throw Error(`Expecting md or html extension: ${file.basename}`);
-        })
+        }),
     );
 
-    return merge([css, js, html, migrations, jsLibs])
+    return merge([
+        css,
+        js,
+        html,
+        editorsHtml,
+        sidebarHtml,
+        sidebarToolbarHtml,
+        handlebarsTemplates,
+    ])
         .pipe(concat('index.html'))
+        .pipe(header(resourceFiles.join('')))
         .pipe(dest(editorFilePath + '/'));
 });
 
@@ -325,7 +435,11 @@ task('copyIcons', () => {
 });
 
 task('copyLocales', () => {
-    return src('locales/en-US/*')
+    return src('locales/**/*').pipe(dest(`${editorFilePath}/locales`));
+});
+
+task('buildLocalLocales', () => {
+    return src('src/**/locale.json')
         .pipe(mergeJson({ fileName: 'index.json' }))
         .pipe(dest(`${editorFilePath}/locales/en-US`));
 });
@@ -334,7 +448,11 @@ task('copyAssetFiles', parallel(['copyIcons', 'copyLocales']));
 
 task(
     'buildAll',
-    parallel(['buildEditorFiles', 'buildSourceFiles', 'copyAssetFiles'])
+    parallel([
+        'buildEditorFiles',
+        'buildSourceFiles',
+        series(['copyAssetFiles', 'buildLocalLocales']),
+    ]),
 );
 
 // Clean generated files
@@ -345,13 +463,7 @@ task('cleanAssetFiles', (done) => {
 });
 
 task('cleanSourceFiles', (done) => {
-    del.sync([
-        'dist/controllers',
-        'dist/helpers',
-        'dist/homeAssistant',
-        'dist/migrations',
-        'dist/*.js',
-    ]);
+    del.sync(['dist/helpers', 'dist/homeAssistant', 'dist/nodes', 'dist/*.js']);
 
     done();
 });
@@ -364,17 +476,20 @@ task('cleanEditorFiles', (done) => {
 
 task(
     'cleanAllFiles',
-    parallel(['cleanAssetFiles', 'cleanSourceFiles', 'cleanEditorFiles'])
+    parallel(['cleanAssetFiles', 'cleanSourceFiles', 'cleanEditorFiles']),
 );
 
 // nodemon and browser-sync code modified from
 // https://github.com/connio/node-red-contrib-connio/blob/master/gulpfile.js
 function runNodemonAndBrowserSync(done) {
+    const argv = require('yargs').argv;
+    const dir = argv.dir;
+
     nodemonInstance = nodemon(`
-    nodemon
-    --ignore **/*
-    --exec node-red -u ~/.node-red
-  `);
+        nodemon
+        --ignore **/*
+        --exec node-red -u ${dir ?? process.env.NODE_RED_DEV_DIR ?? '.node-red'}
+    `);
 
     nodemon
         .once('start', () => {
@@ -387,7 +502,7 @@ function runNodemonAndBrowserSync(done) {
                 },
                 ghostMode: false,
                 open: false,
-                reloadDelay: 3000,
+                reloadDelay: 4000,
             });
         })
         .on('quit', () => process.exit(0));
@@ -418,22 +533,34 @@ module.exports = {
             watch(
                 [
                     'docs/node/*.md',
-                    'locales/**/*.json',
-                    'src/migrations/**/*',
-                    'ui/**/*',
+                    'src/nodes/**/editor/*',
+                    'src/nodes/**/editor.*',
+                    'src/nodes/**/migrations.ts',
+                    'src/editor/**/*',
+                    'src/editor.ts',
                 ],
                 series(
                     'cleanEditorFiles',
-                    parallel(['buildEditorFiles', 'copyLocales']),
-                    restartNodemonAndBrowserSync
-                )
+                    'buildEditorFiles',
+                    restartNodemonAndBrowserSync,
+                ),
             );
             // only server side files modified restart node-red only
             watch(
-                ['src/**/*.js', 'src/**/*.ts'],
-                series('cleanSourceFiles', 'buildSourceFiles', restartNodemon)
+                [
+                    'src/**/*.js',
+                    'src/**/*.ts',
+                    '!src/nodes/**/editor.*',
+                    '!src/nodes/**/editor/*',
+                    '!src/editor.ts',
+                ],
+                series('cleanSourceFiles', 'buildSourceFiles', restartNodemon),
+            );
+            watch(
+                'src/**/locale.json',
+                series('buildLocalLocales', restartNodemonAndBrowserSync),
             );
             done();
-        }
+        },
     ),
 };

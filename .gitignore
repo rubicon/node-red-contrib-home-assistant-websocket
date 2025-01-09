@@ -10,4 +10,6 @@ _scratchpad_flows
 coverage
 .nyc_output
 dist/
-.husky
+docs/.vuepress/.cache
+docs/.vuepress/.temp
+.node-red

@@ -1,6 +1,6 @@
 # Time
 
-A node that can be scheduled to trigger at a future date and time from a Home Assistant entity.
+The Time node can be scheduled to trigger at a specific future date and time, based on a Home Assistant entity. This node is useful for creating time-based automations, such as triggering a notification or alarm at a specific hour.
 
 ## Configuration
 
@@ -14,11 +14,16 @@ A Home Assistant entity to be used when scheduling the node.
 
 - Type: `string`
 
-Which property of the entity to use to schedule the node.
+Which property of the entity object to use to schedule the node.
 
-The node will accept any date string that the javascript object accepts as a valid date. It will also accept a 24-hour time format with the seconds place optional.
+example properties:
 
-examples:
+- <code>entity_id</code>
+- <code>state</code>
+- <code>attributes.date</code>
+- <code>last_updated</code>
+
+example values for the property:
 
 - <code>2020-12-31T02:47:54.837Z</code>
 - <code>1609382842709</code>
@@ -48,6 +53,12 @@ The payload is fully customizable. The default will be a JSONata expression that
 - Type: `boolean`
 
 If selected the node will only use the time portion of the date string to schedule the node and will trigger at that time each day. Otherwise, the node will only trigger once at the given day and time.
+
+### Expose as
+
+- Type: `string`
+
+When an entity is selected a switch entity will be created in Home Assistant. Turning on and off this switch will disable/enable the nodes in Node-RED.
 
 ## Outputs
 

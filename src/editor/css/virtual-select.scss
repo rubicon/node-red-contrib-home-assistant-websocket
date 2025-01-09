@@ -1,0 +1,112 @@
+.vscomp-wrapper {
+    font-family: var(--red-ui-primary-font);
+    color: var(--red-ui-form-text-color);
+
+    &.focused,
+    &:focus {
+        .vscomp-toggle-button {
+            box-shadow: none;
+            border-color: var(--red-ui-form-input-focus-color);
+            outline: 0;
+            outline: thin dotted \9;
+        }
+    }
+
+    .vscomp-toggle-button {
+        background-color: var(--red-ui-form-input-background);
+        border-color: var(--red-ui-form-input-border-color);
+        border-radius: 4px;
+        height: 34px;
+        vertical-align: middle;
+    }
+
+    .vscomp-value {
+        color: var(--red-ui-primary-text-color);
+    }
+
+    .vscomp-arrow {
+        &::after {
+            border-bottom-color: var(--red-ui-form-text-color);
+            border-right-color: var(--red-ui-form-text-color);
+        }
+    }
+
+    .vscomp-clear-icon {
+        &::before,
+        &::after {
+            background-color: var(--red-ui-form-text-color);
+        }
+
+        &:hover {
+            &::before,
+            &::after {
+                background: var(--red-ui-form-input-background);
+            }
+        }
+    }
+
+    .vscomp-clear-button {
+        &:hover {
+            background: var(--red-ui-form-text-color);
+
+            .vscomp-clear-icon {
+                &::before,
+                &::after {
+                    background-color: var(--red-ui-form-input-background);
+                }
+            }
+        }
+    }
+
+    .vscomp-dropbox {
+        background-color: var(--red-ui-form-input-background);
+        border: 1px solid var(--red-ui-primary-border-color);
+    }
+
+    .vscomp-option {
+        &.selected {
+            background-color: var(--red-ui-secondary-background-selected);
+        }
+
+        &.focused {
+            background-color: var(--red-ui-secondary-background-hover);
+        }
+
+        .vscomp-option-description {
+            color: var(--red-ui-form-placeholder-color);
+            font-size: 11px;
+        }
+    }
+
+    .vscomp-search-container {
+        border-bottom-color: var(--red-ui-form-input-border-color);
+
+        > label.vscomp-search-label {
+            border: 0;
+            clip: rect(0 0 0 0);
+            height: 1px;
+            margin: -1px;
+            margin-bottom: -1px;
+            overflow: hidden;
+            padding: 0;
+            position: absolute;
+            white-space: nowrap;
+            width: 1px;
+        }
+
+        > input.vscomp-search-input {
+            background-color: rgba(0, 0, 0, 0);
+            border: 0;
+            color: inherit;
+            font-size: 15px;
+            height: 38px;
+            padding: 10px 0;
+            width: calc(100% - 30px);
+        }
+    }
+
+    .pop-comp-wrapper {
+        color: var(--red-ui-form-text-color);
+        background-color: var(--red-ui-form-input-background);
+    }
+}

@@ -1,6 +1,6 @@
 # Tag
 
-Sends an output when Home Assistant receives a tag scanned event for a configured tag id.
+The Tag node outputs data when Home Assistant receives a tag scanned event for a configured tag ID. This node is useful for creating automations based on NFC tags or other scannable identifiers, allowing specific actions to be triggered when a tag is scanned.
 
 ## Configuration
 
@@ -15,6 +15,12 @@ An array of tag ids to monitor for tag scanned events.
 - Type: `array`
 
 An array of device ids to check when a configured tag is scanned.
+
+### Expose as
+
+- Type: `string`
+
+When an entity is selected a switch entity will be created in Home Assistant. Turning on and off this switch will disable/enable the nodes in Node-RED.
 
 ## Outputs
 
